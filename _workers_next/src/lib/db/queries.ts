@@ -524,68 +524,63 @@ export async function getActiveProducts() {
 export async function getWishlistItems(userId: string | null, limit = 10) {
     await ensureDatabaseInitialized();
 
-    const fetchItems = async () => {
-        const items = await db
-            .select({
-                id: wishlistItems.id,
-                title: wishlistItems.title,
-                description: wishlistItems.description,
-                username: wishlistItems.username,
-                createdAt: wishlistItems.createdAt,
-            })
-            .from(wishlistItems)
-            .orderBy(desc(wishlistItems.createdAt))
-            .limit(limit);
-
-        if (!items.length) {
-            return [];
-        }
-
-        const ids = items.map((row) => Number(row.id)).filter(Boolean);
-
-        const voteRows = await db
-            .select({
-                itemId: wishlistVotes.itemId,
-                count: sql<number>`COUNT(*)`
-            })
-            .from(wishlistVotes)
-            .where(inArray(wishlistVotes.itemId, ids))
-            .groupBy(wishlistVotes.itemId);
-
-        const voteMap = new Map<number, number>();
-        for (const row of voteRows) {
-            voteMap.set(Number(row.itemId), Number(row.count || 0));
-        }
-
-        let votedSet = new Set<number>();
-        if (userId) {
-            const userVotes = await db
-                .select({ itemId: wishlistVotes.itemId })
-                .from(wishlistVotes)
-                .where(and(inArray(wishlistVotes.itemId, ids), eq(wishlistVotes.userId, userId)));
-            votedSet = new Set(userVotes.map((row) => Number(row.itemId)));
-        }
-
-        return items
-            .map((row: any) => ({
-                id: Number(row.id),
-                title: row.title,
-                description: row.description,
-                username: row.username,
-                createdAt: Number(row.createdAt ?? 0),
-                votes: voteMap.get(Number(row.id)) || 0,
-                voted: votedSet.has(Number(row.id))
-            }))
-            .sort((a, b) => (b.votes - a.votes) || (b.createdAt - a.createdAt));
-    };
-
     try {
-        return await fetchItems();
+        const result: any = await db.run(sql`
+            SELECT
+                wi.id AS id,
+                wi.title AS title,
+                wi.description AS description,
+                wi.username AS username,
+                wi.created_at AS created_at,
+                COUNT(wv.id) AS votes,
+                SUM(CASE WHEN wv.user_id = ${userId} THEN 1 ELSE 0 END) AS voted
+            FROM wishlist_items wi
+            LEFT JOIN wishlist_votes wv ON wv.item_id = wi.id
+            GROUP BY wi.id
+            ORDER BY votes DESC, wi.created_at DESC
+            LIMIT ${limit}
+        `);
+
+        const rows = result?.results || result?.rows || [];
+        return rows.map((row: any) => ({
+            id: Number(row.id),
+            title: row.title,
+            description: row.description,
+            username: row.username,
+            createdAt: Number(row.created_at ?? row.createdAt ?? 0),
+            votes: Number(row.votes || 0),
+            voted: Number(row.voted || 0) > 0,
+        }));
     } catch (error: any) {
         if (isMissingTableOrColumn(error)) {
             await ensureWishlistTables();
+            // Retry once
             try {
-                return await fetchItems();
+                const result: any = await db.run(sql`
+                    SELECT
+                        wi.id AS id,
+                        wi.title AS title,
+                        wi.description AS description,
+                        wi.username AS username,
+                        wi.created_at AS created_at,
+                        COUNT(wv.id) AS votes,
+                        SUM(CASE WHEN wv.user_id = ${userId} THEN 1 ELSE 0 END) AS voted
+                    FROM wishlist_items wi
+                    LEFT JOIN wishlist_votes wv ON wv.item_id = wi.id
+                    GROUP BY wi.id
+                    ORDER BY votes DESC, wi.created_at DESC
+                    LIMIT ${limit}
+                `);
+                const rows = result?.results || result?.rows || [];
+                return rows.map((row: any) => ({
+                    id: Number(row.id),
+                    title: row.title,
+                    description: row.description,
+                    username: row.username,
+                    createdAt: Number(row.created_at ?? row.createdAt ?? 0),
+                    votes: Number(row.votes || 0),
+                    voted: Number(row.voted || 0) > 0,
+                }));
             } catch (retryError) {
                 console.error('getWishlistItems retry failed:', retryError);
                 return [];

@@ -65,6 +65,10 @@ export async function markAllNotificationsRead() {
             INSERT OR IGNORE INTO broadcast_reads (message_id, user_id, created_at)
             SELECT m.id, ${userId}, ${now}
             FROM broadcast_messages m
+            WHERE NOT EXISTS (
+                SELECT 1 FROM broadcast_reads r
+                WHERE r.message_id = m.id AND r.user_id = ${userId}
+            )
         `)
     } catch {
         // ignore
@@ -130,14 +134,14 @@ export async function getMyNotifications() {
             broadcastItems = broadcasts.map((b) => {
                 const bid = Number(b.id)
                 return ({
-                id: bid,
-                type: "broadcast",
-                titleKey: "profile.notifications.adminMessageTitle",
-                contentKey: "profile.notifications.adminMessageBody",
-                data: JSON.stringify({ title: b.title, body: b.body }),
-                isRead: readSet.has(bid),
-                createdAt: b.createdAt ? new Date(b.createdAt as any).getTime() : null
-            })
+                    id: bid,
+                    type: "broadcast",
+                    titleKey: "profile.notifications.adminMessageTitle",
+                    contentKey: "profile.notifications.adminMessageBody",
+                    data: JSON.stringify({ title: b.title, body: b.body }),
+                    isRead: readSet.has(bid),
+                    createdAt: b.createdAt ? new Date(b.createdAt as any).getTime() : null
+                })
             })
         }
     } catch {
